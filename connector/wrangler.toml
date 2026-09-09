@@ -1,0 +1,14 @@
+name = "calorie-connector"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+FIREBASE_PROJECT_ID = "calorie-tracker-e6c92"
+# Твой uid — возьми на странице трекера (блок «Мой ID для коннектора») и вставь сюда.
+USER_UID = "ЗАМЕНИ_НА_СВОЙ_UID"
+# Часовой пояс для расчёта «сегодня» в list_meals.
+TIMEZONE = "Europe/London"
+
+# Секреты (НЕ храним в этом файле) задаются командой `wrangler secret put`:
+#   wrangler secret put CONNECTOR_TOKEN        — секрет в URL-пути коннектора
+#   wrangler secret put SERVICE_ACCOUNT_JSON   — JSON ключа service account целиком

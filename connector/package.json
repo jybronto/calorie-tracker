@@ -1,0 +1,13 @@
+{
+  "name": "calorie-connector",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP-коннектор трекера калорий (Cloudflare Workers)",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.86.0"
+  }
+}

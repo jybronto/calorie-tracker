@@ -160,6 +160,17 @@
     </div>
 
     <p class="hint">💬 Обычно записи заносит Claude — просто скажи ему в приложении, что ты съел.</p>
+
+    <details class="add card" style="margin-top:4px">
+      <summary style="color:var(--muted); font-weight:600">⚙️ Мой ID для коннектора</summary>
+      <div style="margin-top:10px; font-size:13px; color:var(--muted)">
+        Нужен один раз при настройке коннектора — вставляется в <code>connector/wrangler.toml</code> (поле <code>USER_UID</code>).
+        <div style="display:flex; gap:8px; margin-top:10px; align-items:center">
+          <code id="uidText" style="background:var(--bg); padding:8px 10px; border-radius:8px; border:1px solid var(--border); word-break:break-all; flex:1"></code>
+          <button id="copyUid" class="btn" style="padding:9px 14px; white-space:nowrap">Копировать</button>
+        </div>
+      </div>
+    </details>
   </main>
 </div>
 
@@ -186,6 +197,10 @@ let viewDate = startOfDay(new Date());
 // ---------- Аутентификация ----------
 $("signIn").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch(e => alert("Ошибка входа: " + e.message));
 $("signOut").onclick = () => signOut(auth);
+$("copyUid").onclick = async () => {
+  try { await navigator.clipboard.writeText($("uidText").textContent); $("copyUid").textContent = "Скопировано ✓"; setTimeout(()=>$("copyUid").textContent="Копировать", 1500); }
+  catch { alert("Скопируй вручную: " + $("uidText").textContent); }
+};
 
 onAuthStateChanged(auth, (u) => {
   user = u;
@@ -194,6 +209,7 @@ onAuthStateChanged(auth, (u) => {
     $("app").classList.remove("hidden");
     $("userBox").classList.remove("hidden");
     $("userPic").src = u.photoURL || "";
+    $("uidText").textContent = u.uid;
     loadGoal();
     watchDay();
   } else {
