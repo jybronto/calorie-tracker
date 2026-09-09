@@ -176,10 +176,13 @@ async function logMeal(args, env) {
 
   const nowIso = new Date().toISOString();
   const eatenIso = args.eaten_at ? new Date(args.eaten_at).toISOString() : nowIso;
+  // Приоритет: явное поле → слово-приём в тексте названия → определение по времени.
   let mealType = normalizeMealType(args.meal_type);
+  if (!mealType) mealType = detectMealFromText(args.name);
   if (!mealType) mealType = inferMealType(eatenIso, env.TIMEZONE || "Europe/London");
+  const cleanName = stripMealPrefix(String(args.name));
   const fields = {
-    name: { stringValue: String(args.name) },
+    name: { stringValue: cleanName },
     calories: { doubleValue: num(args.calories) },
     protein: { doubleValue: num(args.protein) },
     fat: { doubleValue: num(args.fat) },
@@ -203,7 +206,7 @@ async function logMeal(args, env) {
   const docId = doc.name.split("/").pop();
 
   return (
-    `✅ Записал${mealType ? ` (${mealType})` : ""}: ${args.name} — ${Math.round(num(args.calories))} ккал ` +
+    `✅ Записал${mealType ? ` (${mealType})` : ""}: ${cleanName} — ${Math.round(num(args.calories))} ккал ` +
     `(Б ${Math.round(num(args.protein))} / Ж ${Math.round(num(args.fat))} / У ${Math.round(num(args.carbs))} г)` +
     `${args.portion ? `, ${args.portion}` : ""}. id: ${docId}`
   );
@@ -325,6 +328,23 @@ function normalizeMealType(v) {
     "перекус": "перекус", snack: "перекус", "снек": "перекус",
   };
   return map[s] || "";
+}
+
+// Распознавание слова-приёма в тексте названия (страховка, если модель не заполнила meal_type).
+function detectMealFromText(text) {
+  if (!text) return "";
+  const s = String(text).toLowerCase();
+  if (/перекус|снек|snack/.test(s)) return "перекус";
+  if (/завтрак|breakfast/.test(s)) return "завтрак";
+  if (/ужин|dinner|supper/.test(s)) return "ужин";
+  if (/обед|lunch/.test(s)) return "обед";
+  return "";
+}
+
+// Убирает ведущий ярлык приёма из названия: «Перекус: кофе» → «кофе».
+function stripMealPrefix(name) {
+  const cleaned = String(name).replace(/^\s*(завтрак|обед|ужин|перекус|снек)\s*[:\-–—]\s*/i, "").trim();
+  return cleaned || String(name);
 }
 
 // Определение приёма пищи по времени: до 12:00 — завтрак, после 17:00 — ужин, иначе обед.
