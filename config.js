@@ -2,12 +2,12 @@
 // Эти значения НЕ секретны — их можно коммитить (доступ ограничивают правила безопасности Firestore).
 // Возьми их в консоли Firebase: Project settings → General → Your apps → SDK setup and configuration.
 export const firebaseConfig = {
-  apiKey: "ЗАМЕНИ_МЕНЯ",
-  authDomain: "ЗАМЕНИ_МЕНЯ.firebaseapp.com",
-  projectId: "ЗАМЕНИ_МЕНЯ",
-  storageBucket: "ЗАМЕНИ_МЕНЯ.appspot.com",
-  messagingSenderId: "ЗАМЕНИ_МЕНЯ",
-  appId: "ЗАМЕНИ_МЕНЯ",
+  apiKey: "AIzaSyDe6ntpXzXptZw2JAiJtBdmvjKfaChtydQ",
+  authDomain: "calorie-tracker-e6c92.firebaseapp.com",
+  projectId: "calorie-tracker-e6c92",
+  storageBucket: "calorie-tracker-e6c92.firebasestorage.app",
+  messagingSenderId: "975443487759",
+  appId: "1:975443487759:web:26aa3410fced796102877a",
 };
 
 // Дневная цель по калориям по умолчанию (можно менять на странице).
