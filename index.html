@@ -80,6 +80,9 @@
   .meal .del { background: none; color: var(--muted); font-size: 18px; padding: 0 4px; line-height: 1; }
   .meal .del:hover { color: var(--danger); }
   .empty { color: var(--muted); text-align: center; padding: 22px 0; }
+  .group-head { display: flex; justify-content: space-between; align-items: baseline; margin: 16px 2px 2px; font-size: 13px; font-weight: 700; color: var(--muted); }
+  .group-head:first-child { margin-top: 2px; }
+  .group-head + .meal { border-top: none; }
   .section-title { font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 4px 2px 8px; }
 
   /* Ручное добавление */
@@ -149,6 +152,13 @@
         <summary>+ Добавить вручную</summary>
         <div class="form">
           <input id="mName" class="wide" placeholder="Что съел (напр. Овсянка с бананом)">
+          <select id="mType" class="wide" style="padding:9px 10px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--text)">
+            <option value="">Приём пищи (авто по времени)</option>
+            <option value="завтрак">🍳 Завтрак</option>
+            <option value="обед">🍲 Обед</option>
+            <option value="ужин">🌙 Ужин</option>
+            <option value="перекус">🍎 Перекус</option>
+          </select>
           <input id="mKcal" type="number" placeholder="Ккал">
           <input id="mPortion" placeholder="Порция (напр. 250 г)">
           <input id="mP" type="number" placeholder="Белки, г">
@@ -258,6 +268,46 @@ function watchDay() {
   });
 }
 
+const MEAL_GROUPS = [
+  { key: "завтрак", label: "🍳 Завтрак" },
+  { key: "обед", label: "🍲 Обед" },
+  { key: "ужин", label: "🌙 Ужин" },
+  { key: "перекус", label: "🍎 Перекус" },
+  { key: "", label: "🍽️ Без категории" },
+];
+
+function inferMealType(d) {
+  const h = d.getHours();
+  if (h < 12) return "завтрак";
+  if (h >= 17) return "ужин";
+  return "обед";
+}
+
+function mealItem(m) {
+  const t = m.eatenAt?.toDate ? m.eatenAt.toDate() : new Date();
+  const time = t.toLocaleTimeString("ru-RU", { hour:"2-digit", minute:"2-digit" });
+  const parts = [time];
+  if (m.portion) parts.push(m.portion);
+  const macros = [];
+  if (m.protein) macros.push(`Б ${round(m.protein)}`);
+  if (m.fat) macros.push(`Ж ${round(m.fat)}`);
+  if (m.carbs) macros.push(`У ${round(m.carbs)}`);
+  const el = document.createElement("div");
+  el.className = "meal";
+  el.innerHTML = `
+    <div class="info">
+      <div class="name"></div>
+      <div class="sub">${parts.join(" · ")}${macros.length ? " · " + macros.join(" ") : ""}</div>
+    </div>
+    <div class="kcal">${round(m.calories)} ккал</div>
+    <button class="del" title="Удалить">×</button>`;
+  el.querySelector(".name").textContent = m.name || "Приём пищи";
+  el.querySelector(".del").onclick = () => {
+    if (confirm("Удалить запись?")) deleteDoc(doc(db, "users", user.uid, "meals", m.id));
+  };
+  return el;
+}
+
 function renderMeals(meals) {
   let kcal=0, p=0, f=0, c=0;
   const list = $("mealList");
@@ -265,30 +315,21 @@ function renderMeals(meals) {
   if (!meals.length) {
     list.innerHTML = `<div class="empty">Пока пусто за этот день.</div>`;
   }
+  const byType = {};
   for (const m of meals) {
     kcal += +m.calories || 0; p += +m.protein || 0; f += +m.fat || 0; c += +m.carbs || 0;
-    const t = m.eatenAt?.toDate ? m.eatenAt.toDate() : new Date();
-    const time = t.toLocaleTimeString("ru-RU", { hour:"2-digit", minute:"2-digit" });
-    const parts = [time];
-    if (m.portion) parts.push(m.portion);
-    const macros = [];
-    if (m.protein) macros.push(`Б ${round(m.protein)}`);
-    if (m.fat) macros.push(`Ж ${round(m.fat)}`);
-    if (m.carbs) macros.push(`У ${round(m.carbs)}`);
-    const el = document.createElement("div");
-    el.className = "meal";
-    el.innerHTML = `
-      <div class="info">
-        <div class="name"></div>
-        <div class="sub">${parts.join(" · ")}${macros.length ? " · " + macros.join(" ") : ""}</div>
-      </div>
-      <div class="kcal">${round(m.calories)} ккал</div>
-      <button class="del" title="Удалить">×</button>`;
-    el.querySelector(".name").textContent = m.name || "Приём пищи";
-    el.querySelector(".del").onclick = () => {
-      if (confirm("Удалить запись?")) deleteDoc(doc(db, "users", user.uid, "meals", m.id));
-    };
-    list.appendChild(el);
+    const key = m.mealType || "";
+    (byType[key] = byType[key] || []).push(m);
+  }
+  for (const g of MEAL_GROUPS) {
+    const arr = byType[g.key];
+    if (!arr || !arr.length) continue;
+    const sub = arr.reduce((s, m) => s + (+m.calories || 0), 0);
+    const head = document.createElement("div");
+    head.className = "group-head";
+    head.innerHTML = `<span>${g.label}</span><span>${round(sub)} ккал</span>`;
+    list.appendChild(head);
+    for (const m of arr) list.appendChild(mealItem(m));
   }
   updateSummary(kcal, p, f, c);
 }
@@ -346,11 +387,13 @@ $("addBtn").onclick = async () => {
       fat: +$("mF").value || 0,
       carbs: +$("mC").value || 0,
       portion: $("mPortion").value.trim() || "",
+      mealType: $("mType").value || inferMealType(eaten),
       eatenAt: Timestamp.fromDate(eaten),
       createdAt: Timestamp.now(),
       source: "manual",
     });
     ["mName","mKcal","mPortion","mP","mF","mC"].forEach(id => $(id).value = "");
+    $("mType").value = "";
   } catch (e) { alert("Не удалось сохранить: " + e.message); }
 };
 </script>

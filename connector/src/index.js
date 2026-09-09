@@ -35,6 +35,7 @@ const TOOLS = [
         fat: { type: "number", description: "Жиры, граммы." },
         carbs: { type: "number", description: "Углеводы, граммы." },
         portion: { type: "string", description: "Порция словами, напр. «тарелка», «250 г», «1 шт». Необязательно." },
+        meal_type: { type: "string", enum: ["завтрак", "обед", "ужин", "перекус"], description: "Приём пищи: завтрак, обед, ужин или перекус. Заполни, ТОЛЬКО если пользователь явно упомянул (например «на обед», «в качестве перекуса»). Если не упомянул — НЕ указывай, сервер сам определит по времени." },
         eaten_at: { type: "string", description: "Время приёма пищи в ISO 8601 (напр. 2026-09-09T13:30:00). Если не указано — текущий момент." },
       },
       required: ["name", "calories"],
@@ -175,6 +176,8 @@ async function logMeal(args, env) {
 
   const nowIso = new Date().toISOString();
   const eatenIso = args.eaten_at ? new Date(args.eaten_at).toISOString() : nowIso;
+  let mealType = normalizeMealType(args.meal_type);
+  if (!mealType) mealType = inferMealType(eatenIso, env.TIMEZONE || "Europe/London");
   const fields = {
     name: { stringValue: String(args.name) },
     calories: { doubleValue: num(args.calories) },
@@ -182,6 +185,7 @@ async function logMeal(args, env) {
     fat: { doubleValue: num(args.fat) },
     carbs: { doubleValue: num(args.carbs) },
     portion: { stringValue: args.portion ? String(args.portion) : "" },
+    mealType: { stringValue: mealType },
     eatenAt: { timestampValue: eatenIso },
     createdAt: { timestampValue: nowIso },
     source: { stringValue: "claude" },
@@ -199,7 +203,7 @@ async function logMeal(args, env) {
   const docId = doc.name.split("/").pop();
 
   return (
-    `✅ Записал: ${args.name} — ${Math.round(num(args.calories))} ккал ` +
+    `✅ Записал${mealType ? ` (${mealType})` : ""}: ${args.name} — ${Math.round(num(args.calories))} ккал ` +
     `(Б ${Math.round(num(args.protein))} / Ж ${Math.round(num(args.fat))} / У ${Math.round(num(args.carbs))} г)` +
     `${args.portion ? `, ${args.portion}` : ""}. id: ${docId}`
   );
@@ -236,25 +240,37 @@ async function listMeals(args, env) {
   const rows = await resp.json();
 
   let kcal = 0, p = 0, f = 0, c = 0;
-  const lines = [];
+  const byType = {};
+  let count = 0;
   for (const row of rows) {
     if (!row.document) continue;
     const d = readFields(row.document.fields);
-    const id = row.document.name.split("/").pop();
+    d.id = row.document.name.split("/").pop();
     kcal += d.calories; p += d.protein; f += d.fat; c += d.carbs;
-    const t = d.eatenAt ? new Date(d.eatenAt) : null;
-    const time = t
-      ? new Intl.DateTimeFormat("ru-RU", { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(t)
-      : "--:--";
-    lines.push(
-      `• ${time} — ${d.name}: ${Math.round(d.calories)} ккал` +
-      `${d.portion ? ` (${d.portion})` : ""} [id: ${id}]`
-    );
+    if (!byType[d.mealType]) byType[d.mealType] = [];
+    byType[d.mealType].push(d);
+    count++;
   }
 
-  if (!lines.length) return `За ${ymd} записей нет.`;
+  if (!count) return `За ${ymd} записей нет.`;
+
+  const blocks = [];
+  for (const g of MEAL_GROUPS) {
+    const meals = byType[g.key];
+    if (!meals || !meals.length) continue;
+    const sub = meals.reduce((s, m) => s + m.calories, 0);
+    const lines = meals.map((d) => {
+      const t = d.eatenAt ? new Date(d.eatenAt) : null;
+      const time = t
+        ? new Intl.DateTimeFormat("ru-RU", { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(t)
+        : "--:--";
+      return `  • ${time} — ${d.name}: ${Math.round(d.calories)} ккал${d.portion ? ` (${d.portion})` : ""} [id: ${d.id}]`;
+    });
+    blocks.push(`${g.label} — ${Math.round(sub)} ккал\n${lines.join("\n")}`);
+  }
+
   return (
-    `Дневник за ${ymd}:\n${lines.join("\n")}\n\n` +
+    `Дневник за ${ymd}:\n${blocks.join("\n\n")}\n\n` +
     `Итого: ${Math.round(kcal)} ккал · Б ${Math.round(p)} / Ж ${Math.round(f)} / У ${Math.round(c)} г`
   );
 }
@@ -293,9 +309,41 @@ function readFields(fields = {}) {
     fat: Number(val(fields.fat)) || 0,
     carbs: Number(val(fields.carbs)) || 0,
     portion: val(fields.portion) || "",
+    mealType: val(fields.mealType) || "",
     eatenAt: val(fields.eatenAt) || null,
   };
 }
+
+// Канонизация типа приёма пищи (поддержка англ. вариантов на всякий случай).
+function normalizeMealType(v) {
+  if (!v) return "";
+  const s = String(v).toLowerCase().trim();
+  const map = {
+    "завтрак": "завтрак", breakfast: "завтрак",
+    "обед": "обед", lunch: "обед",
+    "ужин": "ужин", dinner: "ужин", supper: "ужин",
+    "перекус": "перекус", snack: "перекус", "снек": "перекус",
+  };
+  return map[s] || "";
+}
+
+// Определение приёма пищи по времени: до 12:00 — завтрак, после 17:00 — ужин, иначе обед.
+function inferMealType(iso, tz) {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour12: false, hour: "2-digit" }).format(new Date(iso))
+  );
+  if (hour < 12) return "завтрак";
+  if (hour >= 17) return "ужин";
+  return "обед";
+}
+
+const MEAL_GROUPS = [
+  { key: "завтрак", label: "🍳 Завтрак" },
+  { key: "обед", label: "🍲 Обед" },
+  { key: "ужин", label: "🌙 Ужин" },
+  { key: "перекус", label: "🍎 Перекус" },
+  { key: "", label: "🍽️ Без категории" },
+];
 
 // Кэш токена в пределах жизни изолята.
 let _token = { value: null, exp: 0 };
