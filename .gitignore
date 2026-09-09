@@ -1,0 +1,14 @@
+# Секреты — НИКОГДА не коммитить
+serviceAccount.json
+service-account.json
+*.serviceaccount.json
+connector/.dev.vars
+connector/.wrangler/
+.env
+.env.*
+
+# Зависимости
+node_modules/
+
+# Системное
+.DS_Store
