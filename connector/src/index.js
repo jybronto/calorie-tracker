@@ -36,7 +36,7 @@ const TOOLS = [
         carbs: { type: "number", description: "Углеводы, граммы." },
         portion: { type: "string", description: "Порция словами, напр. «тарелка», «250 г», «1 шт». Необязательно." },
         meal_type: { type: "string", enum: ["завтрак", "обед", "ужин", "перекус"], description: "Тип приёма пищи. ОБЯЗАТЕЛЬНО передай это поле, если пользователь употребил слово-приём: «завтрак», «обед», «ужин», «перекус» (а также «снек», «перекусил», «на перекус»). ОСОБЕННО ВАЖНО для перекуса: его невозможно определить по времени, поэтому при любом упоминании перекуса всегда ставь meal_type=\"перекус\". Не указывай это поле ТОЛЬКО если пользователь совсем не называл приём пищи — тогда сервер сам определит завтрак/обед/ужин по времени." },
-        eaten_at: { type: "string", description: "Время приёма пищи в ISO 8601 (напр. 2026-09-09T13:30:00). Если не указано — текущий момент." },
+        eaten_at: { type: "string", description: "НЕ передавай это поле, если пользователь не назвал конкретное время или день — сервер сам поставит текущие дату и время. НИКОГДА не угадывай дату самостоятельно. Заполняй ТОЛЬКО когда пользователь явно указал момент (напр. «вчера в 20:00») — тогда полная дата-время ISO 8601, отталкиваясь от сегодняшней даты из инструкций сервера." },
       },
       required: ["name", "calories"],
     },
@@ -112,12 +112,20 @@ async function handleMessage(msg, env) {
 
   try {
     switch (method) {
-      case "initialize":
+      case "initialize": {
+        const tz = env.TIMEZONE || "Europe/London";
+        const today = new Intl.DateTimeFormat("ru-RU", { timeZone: tz, weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(new Date());
         return ok(id, {
           protocolVersion: params?.protocolVersion || DEFAULT_PROTOCOL,
           capabilities: { tools: { listChanged: false } },
           serverInfo: SERVER_INFO,
+          instructions:
+            `Дневник калорий. Сегодня: ${today} (часовой пояс ${tz}). ` +
+            `Когда пользователь описывает съеденную еду — вызывай log_meal, оценив калории и БЖУ. ` +
+            `ВАЖНО про время: если пользователь не назвал конкретное время или день, НЕ передавай поле eaten_at — сервер сам поставит текущие дату и время. Никогда не угадывай дату сам. ` +
+            `Если пользователь назвал приём пищи (завтрак/обед/ужин/перекус) — заполни meal_type.`,
         });
+      }
 
       case "notifications/initialized":
       case "notifications/cancelled":
