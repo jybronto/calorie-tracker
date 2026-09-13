@@ -36,7 +36,7 @@ const TOOLS = [
         carbs: { type: "number", description: "Углеводы, граммы." },
         portion: { type: "string", description: "Порция словами, напр. «тарелка», «250 г», «1 шт». Необязательно." },
         meal_type: { type: "string", enum: ["завтрак", "обед", "ужин", "перекус"], description: "Тип приёма пищи. ОБЯЗАТЕЛЬНО передай это поле, если пользователь употребил слово-приём: «завтрак», «обед», «ужин», «перекус» (а также «снек», «перекусил», «на перекус»). ОСОБЕННО ВАЖНО для перекуса: его невозможно определить по времени, поэтому при любом упоминании перекуса всегда ставь meal_type=\"перекус\". Не указывай это поле ТОЛЬКО если пользователь совсем не называл приём пищи — тогда сервер сам определит завтрак/обед/ужин по времени." },
-        eaten_at: { type: "string", description: "НЕ передавай это поле, если пользователь не назвал конкретное время или день — сервер сам поставит текущие дату и время. НИКОГДА не угадывай дату самостоятельно. Заполняй ТОЛЬКО когда пользователь явно указал момент (напр. «вчера в 20:00») — тогда полная дата-время ISO 8601, отталкиваясь от сегодняшней даты из инструкций сервера." },
+        eaten_at: { type: "string", description: "Не передавай, если пользователь не назвал время или день — сервер поставит текущий момент. Если назвал (напр. «вчера», «в 8 утра», конкретную дату) — вычисли дату, отталкиваясь от сегодняшней (см. инструкции сервера), и передай полную дату-время ISO 8601." },
       },
       required: ["name", "calories"],
     },
@@ -57,6 +57,26 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", description: "Идентификатор записи." } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "update_meal",
+    description: "Изменить СУЩЕСТВУЮЩУЮ запись по её id (id из list_meals), не создавая новую. Умеет: перенести приём пищи на другой день (date, время суток сохраняется), сменить тип приёма (meal_type), название, калории, БЖУ, порцию. Примеры: «перенеси ужин на вчера» → update_meal с date вчерашней даты; «это был перекус» → meal_type=перекус; «исправь калории на 400» → calories=400.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Идентификатор записи (из list_meals)." },
+        date: { type: "string", description: "Перенести запись на эту дату YYYY-MM-DD; время суток сохранится. Дату вычисляй от сегодняшней (см. инструкции сервера)." },
+        eaten_at: { type: "string", description: "Точные дата и время в ISO 8601, если нужно задать и время. Обычно достаточно date." },
+        meal_type: { type: "string", enum: ["завтрак", "обед", "ужин", "перекус"], description: "Новый тип приёма пищи." },
+        name: { type: "string", description: "Новое название." },
+        calories: { type: "number", description: "Новые калории." },
+        protein: { type: "number", description: "Новые белки, г." },
+        fat: { type: "number", description: "Новые жиры, г." },
+        carbs: { type: "number", description: "Новые углеводы, г." },
+        portion: { type: "string", description: "Новая порция." },
+      },
       required: ["id"],
     },
   },
@@ -121,8 +141,9 @@ async function handleMessage(msg, env) {
           serverInfo: SERVER_INFO,
           instructions:
             `Дневник калорий. Сегодня: ${today} (часовой пояс ${tz}). ` +
-            `Когда пользователь описывает съеденную еду — вызывай log_meal, оценив калории и БЖУ. ` +
-            `ВАЖНО про время: если пользователь не назвал конкретное время или день, НЕ передавай поле eaten_at — сервер сам поставит текущие дату и время. Никогда не угадывай дату сам. ` +
+            `Записывай съеденную еду через log_meal, оценив калории и БЖУ. ` +
+            `Время: если пользователь НЕ назвал время или день — не передавай eaten_at, сервер поставит текущий момент. Если назвал («вчера», «в 8 утра», конкретную дату) — вычисли дату, отталкиваясь от сегодняшней (указана выше), и передай eaten_at. ` +
+            `Чтобы изменить или перенести УЖЕ существующую запись («перенеси ужин на вчера», «это был перекус», «исправь калории») — используй update_meal по её id (id бери из list_meals), НЕ создавай новую. Для переноса на другой день передавай date. ` +
             `Если пользователь назвал приём пищи (завтрак/обед/ужин/перекус) — заполни meal_type.`,
         });
       }
@@ -173,6 +194,8 @@ async function callTool(name, args, env) {
       return await listMeals(args, env);
     case "delete_meal":
       return await deleteMeal(args, env);
+    case "update_meal":
+      return await updateMeal(args, env);
     default:
       throw new Error(`Неизвестный инструмент: ${name}`);
   }
@@ -296,6 +319,47 @@ async function deleteMeal(args, env) {
   });
   if (!resp.ok) throw new Error(`Firestore: ${resp.status} ${await resp.text()}`);
   return `🗑️ Удалил запись ${args.id}.`;
+}
+
+async function updateMeal(args, env) {
+  if (!args.id) throw new Error("Не указан id записи.");
+  const token = await getAccessToken(env);
+  const base = firestoreBase(env);
+  const path = `users/${env.USER_UID}/meals/${encodeURIComponent(args.id)}`;
+  const tz = env.TIMEZONE || "Europe/London";
+
+  const fields = {}; const mask = [];
+  const setNum = (k) => { if (args[k] !== undefined) { fields[k] = { doubleValue: num(args[k]) }; mask.push(k); } };
+  if (args.name !== undefined) { fields.name = { stringValue: stripMealPrefix(String(args.name)) }; mask.push("name"); }
+  setNum("calories"); setNum("protein"); setNum("fat"); setNum("carbs");
+  if (args.portion !== undefined) { fields.portion = { stringValue: String(args.portion) }; mask.push("portion"); }
+  if (args.meal_type !== undefined) { fields.mealType = { stringValue: normalizeMealType(args.meal_type) }; mask.push("mealType"); }
+
+  if (args.eaten_at) {
+    fields.eatenAt = { timestampValue: new Date(args.eaten_at).toISOString() }; mask.push("eatenAt");
+  } else if (args.date) {
+    // Перенос на другой день с сохранением времени суток.
+    const cur = await fetch(`${base}/${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!cur.ok) throw new Error(`Firestore: ${cur.status} ${await cur.text()}`);
+    const doc = await cur.json();
+    const curIso = doc.fields?.eatenAt?.timestampValue || new Date().toISOString();
+    const p = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      .formatToParts(new Date(curIso)).reduce((a, x) => ((a[x.type] = x.value), a), {});
+    const hh = p.hour === "24" ? "00" : p.hour;
+    const newIso = zonedToUtc(`${args.date}T${hh}:${p.minute}:${p.second}`, tz).toISOString();
+    fields.eatenAt = { timestampValue: newIso }; mask.push("eatenAt");
+  }
+
+  if (!mask.length) throw new Error("Не указано, что менять.");
+  const url = `${base}/${path}?` + mask.map(f => `updateMask.fieldPaths=${f}`).join("&") + "&currentDocument.exists=true";
+  const resp = await fetch(url, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  });
+  if (!resp.ok) throw new Error(`Firestore: ${resp.status} ${await resp.text()}`);
+  const updated = readFields((await resp.json()).fields);
+  return `✏️ Обновил: ${updated.name} — ${Math.round(updated.calories)} ккал${updated.mealType ? ` (${updated.mealType})` : ""}.`;
 }
 
 // ---------- Firestore / Google авторизация ----------
