@@ -241,7 +241,7 @@
 import { firebaseConfig, DEFAULT_CALORIE_GOAL } from "./config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+  getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
   getFirestore, collection, query, where, orderBy, onSnapshot,
@@ -267,7 +267,28 @@ const DEFAULT_GOAL = {
 let settings = { goalHistory: [] };
 
 // ---------- Аутентификация ----------
-$("signIn").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch(e => alert("Ошибка входа: " + e.message));
+const provider = new GoogleAuthProvider();
+const POPUP_FALLBACK = [
+  "auth/popup-blocked",
+  "auth/popup-closed-by-user",
+  "auth/cancelled-popup-request",
+  "auth/operation-not-supported-in-this-environment",
+];
+$("signIn").onclick = async () => {
+  try {
+    await signInWithPopup(auth, provider);
+  } catch (e) {
+    if (POPUP_FALLBACK.includes(e.code)) {
+      // На мобильных браузерах попап часто блокируется — входим через перенаправление.
+      try { await signInWithRedirect(auth, provider); }
+      catch (e2) { alert("Ошибка входа: " + e2.message); }
+    } else {
+      alert("Ошибка входа: " + e.message);
+    }
+  }
+};
+// Завершаем вход после возврата с перенаправления.
+getRedirectResult(auth).catch(e => console.error("redirect:", e));
 $("signOut").onclick = () => signOut(auth);
 $("copyUid").onclick = async () => {
   try { await navigator.clipboard.writeText($("uidText").textContent); $("copyUid").textContent = "Скопировано ✓"; setTimeout(()=>$("copyUid").textContent="Копировать", 1500); }
